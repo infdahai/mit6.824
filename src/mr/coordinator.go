@@ -1,29 +1,57 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+	"sync"
+	"time"
+)
 
+type CoorPhase int
+
+const (
+	Maper CoorPhase = iota
+	Reducer
+	Exit
+	Wait
+)
+
+type MetaTaskState int
+
+const (
+	Idle MetaTaskState = iota
+	Progressing
+	Completed
+)
+
+type MetaTask struct {
+	TaskStatus MetaTaskState
+	StartTime  time.Time
+	TaskRef    *Task
+}
 
 type Coordinator struct {
-	// Your definitions here.
-
+	TaskQueue    chan *Task
+	TaskMeta     map[int]*MetaTask
+	Phase        CoorPhase
+	NReduce      int
+	Input        []string
+	Intermediate [][]string
 }
 
-// Your code here -- RPC handlers for the worker to call.
-
-//
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-//
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
-	return nil
+type Task struct {
+	Input        string
+	TaskState    CoorPhase
+	NReduce      int
+	TaskNum      int
+	Intermediate []string
+	Output       string
 }
 
+var mu sync.Mutex
 
 //
 // start a thread that listens for RPCs from worker.go
@@ -46,11 +74,9 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-
+	mu.Lock()
+	defer mu.Unlock()
+	ret := c.Phase == Exit
 	return ret
 }
 
@@ -60,11 +86,132 @@ func (c *Coordinator) Done() bool {
 // nReduce is the number of reduce tasks to use.
 //
 func MakeCoordinator(files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
-
-	// Your code here.
-
-
+	c := Coordinator{
+		TaskQueue:    make(chan *Task, max(nReduce, len(files))),
+		TaskMeta:     make(map[int]*MetaTask),
+		Phase:        Maper,
+		NReduce:      nReduce,
+		Input:        files,
+		Intermediate: make([][]string, nReduce),
+	}
+	c.makeMapTask()
 	c.server()
+	go c.catchTimeOut()
 	return &c
+}
+
+func (c *Coordinator) makeMapTask() {
+	for ind, filename := range c.Input {
+		task := Task{
+			Input:     filename,
+			TaskState: Maper,
+			NReduce:   c.NReduce,
+			TaskNum:   ind,
+		}
+		c.TaskQueue <- &task
+		c.TaskMeta[ind] = &MetaTask{
+			TaskStatus: Idle,
+			TaskRef:    &task,
+		}
+	}
+}
+
+func (c *Coordinator) makeReduceTask() {
+	c.TaskMeta = make(map[int]*MetaTask)
+	for ind, files := range c.Intermediate {
+		task := Task{
+			TaskState:    Reducer,
+			NReduce:      c.NReduce,
+			TaskNum:      ind,
+			Intermediate: files,
+		}
+		c.TaskQueue <- &task
+		c.TaskMeta[ind] = &MetaTask{
+			TaskStatus: Idle,
+			TaskRef:    &task,
+		}
+	}
+}
+
+func (c *Coordinator) catchTimeOut() {
+	for {
+		time.Sleep(5 * time.Second)
+		mu.Lock()
+		if c.Phase == Exit {
+			mu.Unlock()
+			return
+		}
+		for _, metaTask := range c.TaskMeta {
+			if metaTask.TaskStatus == Progressing && time.Since(metaTask.StartTime) > 10*time.Second {
+				c.TaskQueue <- metaTask.TaskRef
+				metaTask.TaskStatus = Idle
+			}
+		}
+		mu.Unlock()
+	}
+}
+
+func (c *Coordinator) DistriTask(args *ExampleArgs, reply *Task) error {
+	mu.Lock()
+	defer mu.Unlock()
+	if len(c.TaskQueue) > 0 {
+		*reply = *<-c.TaskQueue
+		c.TaskMeta[reply.TaskNum].TaskStatus = Progressing
+		c.TaskMeta[reply.TaskNum].StartTime = time.Now()
+	} else if c.Phase == Exit {
+		*reply = Task{
+			TaskState: Exit,
+		}
+	} else {
+		*reply = Task{
+			TaskState: Wait,
+		}
+	}
+	return nil
+}
+
+func (c *Coordinator) TaskCompleted(task *Task, reply *ExampleReply) error {
+	mu.Lock()
+	if task.TaskState != c.Phase || c.TaskMeta[task.TaskNum].TaskStatus == Completed {
+		return nil
+	}
+	c.TaskMeta[task.TaskNum].TaskStatus = Completed
+	mu.Unlock()
+	defer c.processTask(task)
+	return nil
+}
+
+func (c *Coordinator) processTask(task *Task) {
+	mu.Lock()
+	defer mu.Unlock()
+	switch task.TaskState {
+	case Maper:
+		for reduceId, filePath := range task.Intermediate {
+			c.Intermediate[reduceId] = append(c.Intermediate[reduceId], filePath)
+		}
+		if c.finishAllTask() {
+			c.makeReduceTask()
+			c.Phase = Reducer
+		}
+	case Reducer:
+		if c.finishAllTask() {
+			c.Phase = Exit
+		}
+	}
+}
+
+func (c *Coordinator) finishAllTask() bool {
+	for _, taskMeta := range c.TaskMeta {
+		if taskMeta.TaskStatus != Completed {
+			return false
+		}
+	}
+	return true
+}
+
+func max(a int, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
