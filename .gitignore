@@ -1,7 +1,3 @@
-RE/
-.vscode/
-MIT*
-
 # Binaries for programs and plugins
 *.exe
 *.exe~
@@ -22,3 +18,9 @@ pkg/
 api.key
 .api.key.trimmed
 *-handin.tar.gz
+
+# new trash files
+.vscode/
+RE/
+MIT*
+
