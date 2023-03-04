@@ -35,6 +35,7 @@ func (rf *Raft) LeaderAppendEntries() {
 			}
 
 			prevLogIndex := rf.nextIndex[peer] - 1
+			// when return lastSnapshot Index (for snapshot)
 			if prevLogIndex < rf.lastSnapshotIndex {
 				go rf.LeaderSendSnapshot(peer)
 				rf.mu.RUnlock()
@@ -60,7 +61,6 @@ func (rf *Raft) LeaderAppendEntries() {
 				rf.DPrintf(derror, dheart, "convert to Follower(reply.Term>rf.Term)")
 				rf.currentTerm = reply.Term
 				rf.ChangeState(StateFollower, true)
-				rf.persist()
 				return
 			}
 
@@ -70,11 +70,9 @@ func (rf *Raft) LeaderAppendEntries() {
 				DPrintf("[HeartBeat SUCCESS] Leader %d (term %d) ,from Server %d, prevLogIndex %d",
 					rf.me, rf.currentTerm, peer, args.PrevLogIndex)
 
-				match := args.PrevLogIndex + len(args.Entries)
-				next := match + 1
-				// maybe don't need to do this.
-				rf.matchIndex[peer] = max(rf.matchIndex[peer], match)
-				rf.nextIndex[peer] = max(rf.nextIndex[peer], next)
+				//TODO(indahai): do not use max func()
+				rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
+				rf.nextIndex[peer] = rf.matchIndex[peer] + 1
 
 				rf.updateCommitInd(StateLeader, 0)
 			}
@@ -132,7 +130,6 @@ func (rf *Raft) heartBeater() {
 		time.Sleep(HeartbeatInterval * time.Millisecond)
 
 		rf.mu.RLock()
-
 		if rf.state == StateLeader {
 			rf.mu.RUnlock()
 			rf.LeaderAppendEntries()
@@ -177,6 +174,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		reply.Success = false
 		reply.XIndex = rf.getLastIndex()
 		// maybe snapshot, so not Adding 1
+		// snapshot increase and you should grap this.
 
 		DPrintf("[AppendEntries ERROR1]Sever %d ,prevLogIndex %d,Term %d, rf.getLastIndex %d, rf.getLastTerm %d, Confilicing %d",
 			rf.me, args.PrevLogIndex, args.PrevLogTerm, rf.getLastIndex(), rf.getLastTerm(),

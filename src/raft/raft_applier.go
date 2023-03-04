@@ -64,6 +64,7 @@ func (rf *Raft) updateCommitInd(nodeState StateType, leaderCommit int) {
 			rf.commitIndex = min(rf.getLastIndex(), leaderCommit)
 		}
 		DPrintf("[CommitIndex] Fllower %d commitIndex %d", rf.me, rf.commitIndex)
+		return
 	}
 
 	if nodeState == StateLeader {

@@ -44,9 +44,11 @@ func (rf *Raft) LeaderSendSnapshot(peer int) {
 
 	DPrintf("[InstallSnapShot SUCCESS] Leader %d from sever %d", rf.me, peer)
 
-	//prevent backtracking
-	rf.matchIndex[peer] = max(rf.matchIndex[peer], args.LastIncludedIndex)
-	rf.nextIndex[peer] = max(rf.matchIndex[peer]+1, rf.nextIndex[peer])
+	// rf.matchIndex[peer] = max(rf.matchIndex[peer], args.LastIncludedIndex)
+	// rf.nextIndex[peer] = max(rf.matchIndex[peer]+1, rf.nextIndex[peer])
+	// TODO(infdahai): fix 2D
+	rf.matchIndex[peer] = args.LastIncludedIndex
+	rf.nextIndex[peer] = args.LastIncludedIndex + 1
 }
 
 // rlock_guard
@@ -56,7 +58,8 @@ func (rf *Raft) genInstallSnashotArgs(peer int) *InstallSnapshotArgs {
 		LeaderId:          rf.me,
 		LastIncludedIndex: rf.lastSnapshotIndex,
 		LastIncludedTerm:  rf.lastSnapshotTerm,
-		Data:              rf.persister.ReadRaftState(),
+		//TODO(infdahai): fix in 2D
+		Data: rf.persister.ReadSnapshot(),
 	}
 	return args
 }

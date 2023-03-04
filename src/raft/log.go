@@ -23,7 +23,7 @@ func (rf *Raft) getLogWithIndex(globalInd int) LogEntry {
 
 func (rf *Raft) getLogTermWithIndex(globalInd int) int {
 	// TODO(infdahai): assert(globalInd>=lastSSIndex)
-	if globalInd == rf.lastSnapshotIndex {
+	if globalInd <= rf.lastSnapshotIndex {
 		return rf.lastSnapshotTerm
 	}
 	return rf.log[globalInd-rf.lastSnapshotIndex].Term
