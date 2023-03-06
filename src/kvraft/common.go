@@ -1,5 +1,7 @@
 package kvraft
 
+import "time"
+
 const (
 	OK             = "OK"
 	ErrNoKey       = "ErrNoKey"
@@ -11,35 +13,48 @@ type Err string
 
 type Args struct {
 	ClientId  int64
-	RequestId int
+	CommandId int
 }
 
-type PutOrAppend int
+type OpInt int
 
 const (
-	PutOp PutOrAppend = iota
+	PutOp OpInt = iota
 	AppendOp
+	GetOp
 )
 
-// Put or Append
-type PutAppendArgs struct {
+type CommandArgs struct {
 	Key   string
 	Value string
-	Op    PutOrAppend // "Put" or "Append"
-
+	Op    OpInt // "Put" or "Append" or "Get"
 	Args
 }
 
-type PutAppendReply struct {
-	Err Err
-}
-
-type GetArgs struct {
-	Key string
-	Args
-}
-
-type GetReply struct {
+type CommandReply struct {
 	Err   Err
 	Value string
+}
+
+type CommandChanStruct struct {
+	ChanReply chan CommandReply
+	Outdated  time.Time
+}
+
+type LastOpStruct struct {
+	LastReply CommandReply
+	CommandId int
+}
+
+func ConvertOp(opstr string) OpInt {
+	switch opstr {
+	case "PUT":
+		return PutOp
+	case "APPEND":
+		return AppendOp
+	case "GET":
+		return GetOp
+	default:
+		panic("unsupported op")
+	}
 }

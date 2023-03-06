@@ -4,13 +4,18 @@ import (
 	"log"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"6.824/labgob"
 	"6.824/labrpc"
 	"6.824/raft"
 )
 
-const Debug = false
+const (
+	Debug               = false
+	TimeoutInterval     = 500 * time.Millisecond
+	TimeoutChanInterval = 3 * TimeoutInterval
+)
 
 func DPrintf(format string, a ...interface{}) (n int, err error) {
 	if Debug {
@@ -19,11 +24,20 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 	return
 }
 
-type Op struct {
+func (kv *KVServer) DPrintfKV() {
+	if !Debug {
+		return
+	}
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	kvm := kv.kvMachine.(*MemoryKV)
+	for k, v := range kvm.KV {
+		DPrintf("[DBInfo ----]Key : %v, Value : %v", k, v)
+	}
 }
 
 type KVServer struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
@@ -31,14 +45,98 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 
+	// lastApplied int // record the lastApplied to prevent stateMachine from rollback
+	kvMu      sync.RWMutex
+	kvMachine KVStateMachine
+
+	waitApplyCh    map[int]CommandChanStruct // index(raft) -> chan
+	lastRequestId  map[int64]int             // clientid -> commandID
+	lastOperations map[int64]LastOpStruct
+
+	// last SnapShot point , raftIndex
+	lastSSLogIndex int
 }
 
-func (kv *KVServer) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+func genOutdatedTime() time.Time {
+	return time.Now().Add(TimeoutChanInterval)
 }
 
-func (kv *KVServer) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+// create waitForCh
+func (kv *KVServer) UseOrCreateWaitChan(ind int) chan CommandReply {
+	chanForRaftInd, ok := kv.waitApplyCh[ind]
+	if !ok {
+		kv.waitApplyCh[ind] = CommandChanStruct{
+			ChanReply: make(chan CommandReply, 1),
+			Outdated:  genOutdatedTime(),
+		}
+		chanForRaftInd = kv.waitApplyCh[ind]
+	} else {
+		chanForRaftInd.Outdated = genOutdatedTime()
+	}
+	return chanForRaftInd.ChanReply
+}
+
+func (kv *KVServer) RemoveWaitChan(ind int) {
+	for {
+		time.Sleep(TimeoutChanInterval)
+
+		kv.mu.Lock()
+		outdated := kv.waitApplyCh[ind].Outdated
+		if time.Now().After(outdated) {
+			delete(kv.waitApplyCh, ind)
+			kv.mu.Unlock()
+			return
+		}
+		kv.mu.Unlock()
+	}
+}
+
+// rlock_guard
+func (kv *KVServer) isRequestDuplicate(clientId int64, commandId int) bool {
+	lastOp, ok := kv.lastOperations[clientId]
+	if !ok {
+		return false
+	}
+	return lastOp.CommandId == commandId
+}
+
+func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
+	defer DPrintf("{Node %v} processes CommandRequest %v with CommandResponse %v",
+		kv.rf.Me(), args, reply)
+	// return result directly without raft layer's participation if request is duplicated
+
+	kv.mu.RLock()
+	if args.Op != GetOp && kv.isRequestDuplicate(args.ClientId, args.CommandId) {
+		lastReply := kv.lastOperations[args.ClientId].LastReply
+		reply.Value, reply.Err = lastReply.Value, lastReply.Err
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
+
+	ind, _, isLeader := kv.rf.Start(args)
+	if isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
+
+	kv.mu.Lock()
+	ch := kv.UseOrCreateWaitChan(ind)
+	kv.mu.Unlock()
+
+	select {
+	case result := <-ch:
+		// ind is the only one.
+		reply.Value, reply.Err = result.Value, result.Err
+	case <-time.After(TimeoutInterval):
+		reply.Err = ErrTimeout
+	}
+
+	go func() {
+		kv.mu.Lock()
+		kv.RemoveWaitChan(ind)
+		kv.mu.Unlock()
+	}()
 }
 
 //
@@ -76,9 +174,10 @@ func (kv *KVServer) killed() bool {
 // for any long-running work.
 //
 func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int) *KVServer {
+	DPrintf("[InitKVServer---]Server %d", me)
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
+	labgob.Register(CommandArgs{})
 
 	kv := new(KVServer)
 	kv.me = me
@@ -87,5 +186,16 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
 
+	kv.kvMachine = NewMemoryKV()
+	kv.waitApplyCh = make(map[int]CommandChanStruct)
+	kv.lastRequestId = make(map[int64]int)
+	kv.lastOperations = make(map[int64]LastOpStruct)
+
+	snapshot := persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		kv.ReadSnapshot(snapshot)
+	}
+
+	go kv.applier()
 	return kv
 }
