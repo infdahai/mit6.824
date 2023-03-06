@@ -33,6 +33,8 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	ck.clientId = nrand()
 	ck.leaderId = NServerRand(len(servers))
+	DPrintf(int(ck.clientId), "[InitClerk---clerk]clientId[%d] commandId[%d] leaderId[%d] ",
+		ck.clientId%1000, ck.commandId, ck.leaderId)
 	return ck
 }
 
@@ -59,11 +61,16 @@ func (ck *Clerk) nextLeader(leaderId int) int {
 const RetryInterval = 300 * time.Millisecond
 
 func (ck *Clerk) Command(req *CommandArgs) string {
-	args := ck.args()
+	req.Args = ck.args()
 	server := ck.leaderId
+	DPrintf(int(ck.clientId), "[ClientSend Command---req]clientId[%d] commandId[%d] Operation[%s] Key[%s] Val[%s]",
+		req.ClientId%1000, req.CommandId, Opmap[req.Op], req.Key, req.Value)
+
 	for {
 		var reply CommandReply
-		ok := ck.servers[server].Call("KVServer.Command", &args, &reply)
+		ok := ck.servers[server].Call("KVServer.Command", req, &reply)
+		DPrintf(int(ck.clientId), "[ClientRecv Command--reply]clientId[%d] commandId[%d] ok[%t] val[%s] err[%s]",
+			req.ClientId%1000, req.CommandId, ok, reply.Value, reply.Err)
 		if !ok || reply.Err == ErrTimeout {
 			server = ck.nextLeader(server)
 			continue

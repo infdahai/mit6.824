@@ -1,6 +1,10 @@
 package kvraft
 
-import "time"
+import (
+	"fmt"
+	"log"
+	"time"
+)
 
 const (
 	OK             = "OK"
@@ -37,7 +41,7 @@ type CommandReply struct {
 }
 
 type CommandChanStruct struct {
-	ChanReply chan CommandReply
+	ChanReply chan *CommandReply
 	Outdated  time.Time
 }
 
@@ -57,4 +61,48 @@ func ConvertOp(opstr string) OpInt {
 	default:
 		panic("unsupported op")
 	}
+}
+
+var Opmap = [...]string{
+	"Put",
+	"Append",
+	"Get",
+}
+
+const (
+	Green  Color = "\033[1;32;40m"
+	Yellow Color = "\033[1;33;40m"
+	Blue   Color = "\033[1;34;40m"
+	Red    Color = "\033[1;31;40m"
+	White  Color = "\033[1;37;40m"
+
+	Def Color = "\033[0m\n"
+)
+
+func ColorStr(topic int) string {
+	var col Color
+	topic = topic % 5
+	switch topic {
+	case 0:
+		col = Green
+	case 1:
+		col = Yellow
+	case 2:
+		col = Blue
+	case 3:
+		col = Red
+	case 4:
+		col = White
+	}
+	res := string(col) + "%s" + string(Def)
+	return res
+}
+
+func DPrintf(id int, format string, a ...interface{}) (n int, err error) {
+	if Debug {
+		colstr := ColorStr(id)
+		str := fmt.Sprintf(format, a...)
+		log.Printf(colstr, str)
+	}
+	return
 }
