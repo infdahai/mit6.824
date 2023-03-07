@@ -33,8 +33,6 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	ck.clientId = nrand()
 	ck.leaderId = NServerRand(len(servers))
-	DPrintf(int(ck.clientId), "[InitClerk---clerk]clientId[%d] commandId[%d] leaderId[%d] ",
-		ck.clientId%1000, ck.commandId, ck.leaderId)
 	return ck
 }
 
@@ -63,29 +61,20 @@ const RetryInterval = 80 * time.Millisecond
 func (ck *Clerk) Command(req *CommandArgs) string {
 	req.Args = ck.args()
 	server := ck.leaderId
-	DPrintf(int(ck.clientId), "[ClientSend Command---req]clientId[%d] commandId[%d] Operation[%s] Key[%s] Val[%s]",
-		req.ClientId%1000, req.CommandId, Opmap[req.Op], req.Key, req.Value)
 
 	for {
 		var reply CommandReply
 		ok := ck.servers[server].Call("KVServer.Command", req, &reply)
 
-		DPrintf(int(ck.clientId), "[ClientRecv Command--reply]clientId[%d] commandId[%d] ok[%t] err[%s]",
-			req.ClientId%1000, req.CommandId, ok, reply.Err)
 		if !ok || reply.Err == ErrTimeout {
 			server = ck.nextLeader(server)
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
-			tmp_serv := server
-			server = ck.nextLeader(server)
-			DPrintf(int(ck.clientId), "[Client Command--WrongLeader]clientId[%d] commandId[%d] oldLer[%d] newLer[%d]",
-				req.ClientId%1000, req.CommandId, tmp_serv, server)
 			time.Sleep(RetryInterval)
+			server = ck.nextLeader(server)
 			continue
 		}
-		DPrintf(int(ck.clientId), "[Client Command--OK]clientId[%d] commandId[%d] val[%s]",
-			req.ClientId%1000, req.CommandId, reply.Value)
 		ck.commandId++
 		ck.leaderId = server
 		return reply.Value

@@ -35,22 +35,16 @@ type KVServer struct {
 // create waitForCh
 func (kv *KVServer) UseOrCreateWaitChan(ind int) chan *CommandReply {
 	chanForRaftInd, ok := kv.waitApplyCh[ind]
-	DPrintf(kv.rf.Me(), "[Server CreateChan--start]server[%d] ind[%d]",
-		kv.rf.Me()%1000, ind)
 	if !ok {
 		kv.waitApplyCh[ind] = CommandChanStruct{
 			ChanReply: make(chan *CommandReply, 1),
 		}
 		chanForRaftInd = kv.waitApplyCh[ind]
 	}
-	DPrintf(kv.rf.Me(), "[Server CreateChan--done]server[%d] ok[%t] ",
-		kv.rf.Me()%1000, ok)
 	return chanForRaftInd.ChanReply
 }
 
 func (kv *KVServer) RemoveWaitChan(ind int) {
-	DPrintf(kv.rf.Me(), "[Server DelChan--]server[%d] ind[%d]",
-		kv.rf.Me()%1000, ind)
 	kv.mu.Lock()
 	delete(kv.waitApplyCh, ind)
 	kv.mu.Unlock()
@@ -66,16 +60,10 @@ func (kv *KVServer) isRequestDuplicate(clientId int64, commandId int) bool {
 }
 
 func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
-	DPrintf(kv.rf.Me(), "[ServerRecv Command--req]server[%d] clientId[%d] commandId[%d] Operation[%s] Key[%s]",
-		kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, Opmap[args.Op], args.Key)
-
 	kv.mu.RLock()
 	if args.Op != GetOp && kv.isRequestDuplicate(args.ClientId, args.CommandId) {
-
 		lastReply := kv.lastOperations[args.ClientId].LastReply
 		reply.Value, reply.Err = lastReply.Value, lastReply.Err
-		DPrintf(kv.rf.Me(), "[ServerRecv Command--dup]server[%d] clientId[%d] commandId[%d] err[%s]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 		kv.mu.RUnlock()
 		return
 	}
@@ -83,9 +71,6 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 
 	ind, _, isLeader := kv.rf.Start(*args)
 	if !isLeader {
-		DPrintf(kv.rf.Me(), "[Server Command--WrongLeader]server[%d] clientId[%d] commandId[%d]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId)
-
 		reply.Err = ErrWrongLeader
 		return
 	}
@@ -98,14 +83,8 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 	case result := <-ch:
 		// ind is the only one.
 		reply.Value, reply.Err = result.Value, result.Err
-
-		DPrintf(kv.rf.Me(), "[Server Command--OKChan]server[%d] clientId[%d] commandId[%d] err[%s]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 	case <-time.After(TimeoutInterval):
 		reply.Err = ErrTimeout
-
-		DPrintf(kv.rf.Me(), "[Server Command--Timeout]server[%d] clientId[%d] commandId[%d]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId)
 	}
 
 	go kv.RemoveWaitChan(ind)
@@ -166,7 +145,6 @@ func StartKVServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persiste
 		kv.ReadSnapshot(snapshot)
 	}
 
-	DPrintf(me, "[StartKVServer---]Server[%d]", me%1000)
 	go kv.applier()
 	return kv
 }
