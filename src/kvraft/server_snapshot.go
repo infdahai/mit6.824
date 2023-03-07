@@ -29,7 +29,7 @@ func (kv *KVServer) ReadSnapshot(snapshot []byte) {
 func (kv *KVServer) MakeSnapshot() []byte {
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
-	e.Encode(kv.kvMachine)
+	e.Encode(kv.kvMachine.KV)
 	e.Encode(kv.lastOperations)
 	data := w.Bytes()
 	return data

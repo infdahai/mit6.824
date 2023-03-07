@@ -3,7 +3,6 @@ package kvraft
 import (
 	"fmt"
 	"log"
-	"time"
 )
 
 const (
@@ -42,7 +41,6 @@ type CommandReply struct {
 
 type CommandChanStruct struct {
 	ChanReply chan *CommandReply
-	Outdated  time.Time
 }
 
 type LastOpStruct struct {
@@ -68,6 +66,8 @@ var Opmap = [...]string{
 	"Append",
 	"Get",
 }
+
+type Color string
 
 const (
 	Green  Color = "\033[1;32;40m"

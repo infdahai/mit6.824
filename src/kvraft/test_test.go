@@ -63,6 +63,8 @@ func Get(cfg *config, ck *Clerk, key string, log *OpLog, cli int) string {
 		})
 	}
 
+	// DPrintf("Get(cfg *config, ck *Clerk, key string, log *OpLog, cli int)")
+
 	return v
 }
 

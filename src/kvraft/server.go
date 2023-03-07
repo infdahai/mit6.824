@@ -11,24 +11,9 @@ import (
 )
 
 const (
-	Debug               = true
-	TimeoutInterval     = 500 * time.Millisecond
-	TimeoutChanInterval = 2 * TimeoutInterval
+	Debug           = false
+	TimeoutInterval = 500 * time.Millisecond
 )
-
-type Color string
-
-func (kv *KVServer) DPrintfKV() {
-	if !Debug {
-		return
-	}
-	kv.mu.Lock()
-	defer kv.mu.Unlock()
-	kvm := kv.kvMachine.(*MemoryKV)
-	for k, v := range kvm.KV {
-		DPrintf(kv.rf.Me(), "[DBInfo ----]Key : %v, Value : %v", k, v)
-	}
-}
 
 type KVServer struct {
 	mu      sync.RWMutex
@@ -39,7 +24,7 @@ type KVServer struct {
 
 	maxraftstate int // snapshot if log grows this big
 	lastApplied  int // record the lastApplied to prevent stateMachine from rollback
-	kvMachine    KVStateMachine
+	kvMachine    *MemoryKV
 
 	waitApplyCh    map[int]CommandChanStruct // index(raft) -> chan
 	lastOperations map[int64]LastOpStruct
@@ -47,40 +32,28 @@ type KVServer struct {
 	// corresponding to the clientId
 }
 
-func genOutdatedTime() time.Time {
-	return time.Now().Add(TimeoutInterval)
-}
-
 // create waitForCh
 func (kv *KVServer) UseOrCreateWaitChan(ind int) chan *CommandReply {
 	chanForRaftInd, ok := kv.waitApplyCh[ind]
-
+	DPrintf(kv.rf.Me(), "[Server CreateChan--start]server[%d] ind[%d]",
+		kv.rf.Me()%1000, ind)
 	if !ok {
 		kv.waitApplyCh[ind] = CommandChanStruct{
 			ChanReply: make(chan *CommandReply, 1),
-			Outdated:  genOutdatedTime(),
 		}
 		chanForRaftInd = kv.waitApplyCh[ind]
-	} else {
-		chanForRaftInd.Outdated = genOutdatedTime()
 	}
-	DPrintf(kv.rf.Me(), "[Server CreateChan--ind]server[%d] ok[%t] outdate[%v]",
-		kv.rf.Me()%1000, ok, kv.waitApplyCh[ind].Outdated)
+	DPrintf(kv.rf.Me(), "[Server CreateChan--done]server[%d] ok[%t] ",
+		kv.rf.Me()%1000, ok)
 	return chanForRaftInd.ChanReply
 }
 
 func (kv *KVServer) RemoveWaitChan(ind int) {
-	for {
-		kv.mu.Lock()
-		outdated := kv.waitApplyCh[ind].Outdated
-		if time.Now().After(outdated) {
-			delete(kv.waitApplyCh, ind)
-			kv.mu.Unlock()
-			return
-		}
-		kv.mu.Unlock()
-		time.Sleep(TimeoutChanInterval)
-	}
+	DPrintf(kv.rf.Me(), "[Server DelChan--]server[%d] ind[%d]",
+		kv.rf.Me()%1000, ind)
+	kv.mu.Lock()
+	delete(kv.waitApplyCh, ind)
+	kv.mu.Unlock()
 }
 
 // rlock_guard
@@ -93,22 +66,25 @@ func (kv *KVServer) isRequestDuplicate(clientId int64, commandId int) bool {
 }
 
 func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
-	DPrintf(kv.rf.Me(), "[ServerRecv Command--req]server[%d] clientId[%d] commandId[%d] Operation[%s] Key[%s] Val[%s]",
-		kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, Opmap[args.Op], args.Key, args.Value)
+	DPrintf(kv.rf.Me(), "[ServerRecv Command--req]server[%d] clientId[%d] commandId[%d] Operation[%s] Key[%s]",
+		kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, Opmap[args.Op], args.Key)
 
 	kv.mu.RLock()
 	if args.Op != GetOp && kv.isRequestDuplicate(args.ClientId, args.CommandId) {
+
 		lastReply := kv.lastOperations[args.ClientId].LastReply
 		reply.Value, reply.Err = lastReply.Value, lastReply.Err
+		DPrintf(kv.rf.Me(), "[ServerRecv Command--dup]server[%d] clientId[%d] commandId[%d] err[%s]",
+			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 		kv.mu.RUnlock()
 		return
 	}
 	kv.mu.RUnlock()
 
 	ind, _, isLeader := kv.rf.Start(*args)
-	if isLeader {
-		DPrintf(kv.rf.Me(), "[Server Command--isLeader]server[%d] clientId[%d]---ErrWrongLeader",
-			kv.rf.Me()%1000, args.ClientId%1000)
+	if !isLeader {
+		DPrintf(kv.rf.Me(), "[Server Command--WrongLeader]server[%d] clientId[%d] commandId[%d]",
+			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId)
 
 		reply.Err = ErrWrongLeader
 		return
@@ -122,8 +98,14 @@ func (kv *KVServer) Command(args *CommandArgs, reply *CommandReply) {
 	case result := <-ch:
 		// ind is the only one.
 		reply.Value, reply.Err = result.Value, result.Err
+
+		DPrintf(kv.rf.Me(), "[Server Command--OKChan]server[%d] clientId[%d] commandId[%d] err[%s]",
+			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 	case <-time.After(TimeoutInterval):
 		reply.Err = ErrTimeout
+
+		DPrintf(kv.rf.Me(), "[Server Command--Timeout]server[%d] clientId[%d] commandId[%d]",
+			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId)
 	}
 
 	go kv.RemoveWaitChan(ind)

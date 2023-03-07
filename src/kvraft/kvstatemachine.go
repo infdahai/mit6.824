@@ -1,12 +1,5 @@
 package kvraft
 
-type KVStateMachine interface {
-	Get(key string) (string, Err)
-	Put(key, value string) Err
-	Append(key, value string) Err
-	Change(interface{})
-}
-
 type MemoryKV struct {
 	KV map[string]string
 }
@@ -32,6 +25,6 @@ func (memoryKV *MemoryKV) Append(key, value string) Err {
 	return OK
 }
 
-func (memoryKV *MemoryKV) Change(kvmap interface{}) {
-	memoryKV.KV = kvmap.(map[string]string)
+func (memoryKV *MemoryKV) Change(kvmap map[string]string) {
+	memoryKV.KV = kvmap
 }

@@ -58,7 +58,7 @@ func (ck *Clerk) nextLeader(leaderId int) int {
 	return (leaderId + 1) % len(ck.servers)
 }
 
-const RetryInterval = 300 * time.Millisecond
+const RetryInterval = 80 * time.Millisecond
 
 func (ck *Clerk) Command(req *CommandArgs) string {
 	req.Args = ck.args()
@@ -69,16 +69,23 @@ func (ck *Clerk) Command(req *CommandArgs) string {
 	for {
 		var reply CommandReply
 		ok := ck.servers[server].Call("KVServer.Command", req, &reply)
-		DPrintf(int(ck.clientId), "[ClientRecv Command--reply]clientId[%d] commandId[%d] ok[%t] val[%s] err[%s]",
-			req.ClientId%1000, req.CommandId, ok, reply.Value, reply.Err)
+
+		DPrintf(int(ck.clientId), "[ClientRecv Command--reply]clientId[%d] commandId[%d] ok[%t] err[%s]",
+			req.ClientId%1000, req.CommandId, ok, reply.Err)
 		if !ok || reply.Err == ErrTimeout {
 			server = ck.nextLeader(server)
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
+			tmp_serv := server
 			server = ck.nextLeader(server)
+			DPrintf(int(ck.clientId), "[Client Command--WrongLeader]clientId[%d] commandId[%d] oldLer[%d] newLer[%d]",
+				req.ClientId%1000, req.CommandId, tmp_serv, server)
 			time.Sleep(RetryInterval)
+			continue
 		}
+		DPrintf(int(ck.clientId), "[Client Command--OK]clientId[%d] commandId[%d] val[%s]",
+			req.ClientId%1000, req.CommandId, reply.Value)
 		ck.commandId++
 		ck.leaderId = server
 		return reply.Value
