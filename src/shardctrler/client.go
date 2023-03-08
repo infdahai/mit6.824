@@ -45,18 +45,25 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck.servers = servers
 	ck.cid = nrand()
 	ck.leaderId = NServerRand(len(servers))
+	DPrintf(int(ck.cid), "[InitClerk---clerk]clientId[%d] commandId[%d] leaderId[%d] ",
+		ck.cid%1000, ck.commandId, ck.leaderId)
 	return ck
 }
 
-const RetryInterval = 100 * time.Millisecond
+const RetryInterval = 80 * time.Millisecond
 
 func (ck *Clerk) Command(req *CommandArgs) Config {
 	req.Args = ck.args()
 	server := ck.leaderId
 
+	DPrintf(int(ck.cid), "[ClientSend Command---send]clientId[%d] commandId[%d] Operation[%s] Servers[%v] Gids[%v] Shard[%d] GID[%d] Num[%d]",
+		req.ClientId%1000, req.CommandId, Opmap[req.Op], req.Servers, req.GIDs, req.Shard, req.GID, req.Num)
 	for {
 		var reply CommandReply
 		ok := ck.servers[server].Call("ShardCtrler.Command", req, &reply)
+
+		DPrintf(int(ck.cid), "[ClientRecv Command--reply]clientId[%d] commandId[%d] ok[%t] err[%s] config[%v]",
+			req.ClientId%1000, req.CommandId, ok, reply.Err, reply.Config)
 		if !ok || reply.Err == ErrTimeout {
 			server = ck.nextLeader(server)
 			continue

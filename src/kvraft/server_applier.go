@@ -33,7 +33,7 @@ func (kv *KVServer) applier() {
 
 			if _, isLeader := kv.rf.GetState(); isLeader {
 				ch := kv.UseOrCreateWaitChan(msg.CommandIndex)
-				ch <- &reply
+				go func() { ch <- &reply }()
 			}
 
 			needSnapshot := kv.needSnapshot(9)

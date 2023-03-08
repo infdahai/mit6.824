@@ -165,13 +165,6 @@ func Group2Shards(config *Config) map[int][]int {
 			s2g[gid] = make([]int, 0)
 		}
 	}
-	// if shards, ok := s2g[0]; ok && len(shards) > 0 {
-	// 	for gid := range config.Groups {
-	// 		s2g[gid] = append(s2g[gid], s2g[0][0])
-	// 		s2g[0] = s2g[0][1:]
-	// 		break
-	// 	}
-	// }
 
 	return s2g
 }
