@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	Debug           = true
+	Debug           = false
 	TimeoutInterval = 500 * time.Millisecond
 )
 
@@ -30,9 +30,6 @@ type ShardCtrler struct {
 func (sc *ShardCtrler) RemoveWaitChan(ind int) {
 	sc.mu.Lock()
 	delete(sc.waitApplyCh, ind)
-
-	DPrintf(sc.rf.Me(), "[Server DelChan--]server[%d] ind[%d]",
-		sc.rf.Me()%1000, ind)
 	sc.mu.Unlock()
 }
 
@@ -45,18 +42,12 @@ func (sc *ShardCtrler) isRequestDuplicate(clientId int64, commandId int64) bool 
 }
 
 func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
-	DPrintf(sc.rf.Me(), "[ServerRecv Command--recv]server[%d] clientId[%d] commandId[%d] Operation[%s]",
-		sc.rf.Me()%1000, args.ClientId%1000, args.CommandId, Opmap[args.Op])
-
 	sc.mu.RLock()
 	isCheckDuplicate := (args.Op != QueryOp) ||
 		(args.Op == QueryOp && args.Num != -1)
 	if isCheckDuplicate && sc.isRequestDuplicate(args.ClientId, args.CommandId) {
 		lastReply := sc.lastOperations[args.ClientId].LastReply
 		reply.Config, reply.Err = lastReply.Config, lastReply.Err
-
-		DPrintf(sc.rf.Me(), "[ServerRecv Command--dup]server[%d] clientId[%d] commandId[%d] err[%s]",
-			sc.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 		sc.mu.RUnlock()
 		return
 	}
@@ -65,8 +56,6 @@ func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 	ind, _, isLeader := sc.rf.Start(*args)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		DPrintf(sc.rf.Me(), "[Server Command--WrongLeader]server[%d] clientId[%d] commandId[%d]",
-			sc.rf.Me()%1000, args.ClientId%1000, args.CommandId)
 		return
 	}
 
@@ -74,20 +63,13 @@ func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
 
 	sc.mu.Lock()
 	sc.waitApplyCh[ind] = ch
-	DPrintf(sc.rf.Me(), "[Server CreateChan--start]server[%d] ind[%d]",
-		sc.rf.Me()%1000, ind)
 	sc.mu.Unlock()
 
 	select {
 	case result := <-ch:
 		reply.Config, reply.Err = result.Config, result.Err
-		DPrintf(sc.rf.Me(), "[Server Command--OKChan]server[%d] clientId[%d] commandId[%d] err[%s]",
-			sc.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
-
 	case <-time.After(TimeoutInterval):
 		reply.Err = ErrTimeout
-		DPrintf(sc.rf.Me(), "[Server Command--Timeout]server[%d] clientId[%d] commandId[%d]",
-			sc.rf.Me()%1000, args.ClientId%1000, args.CommandId)
 	}
 	go sc.RemoveWaitChan(ind)
 }
@@ -124,9 +106,6 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister)
 	sc.configMachine = NewMemoryConfigSM()
 	sc.waitApplyCh = make(map[int]chan *CommandReply)
 	sc.lastOperations = make(map[int64]LastOpStruct)
-
-	DPrintf(me, "[StartKVServer---]Server[%d]", me%1000)
-
 	go sc.applier()
 	return sc
 }
