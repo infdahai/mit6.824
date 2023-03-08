@@ -1,45 +1,77 @@
 package shardctrler
 
+import (
+	"sync"
+	"time"
 
-import "6.824/raft"
-import "6.824/labrpc"
-import "sync"
-import "6.824/labgob"
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+)
 
+const (
+	Debug           = false
+	TimeoutInterval = 500 * time.Millisecond
+)
 
 type ShardCtrler struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	me      int
 	rf      *raft.Raft
 	applyCh chan raft.ApplyMsg
 
-	// Your data here.
+	configMachine *MemoryConfigStateMachine
+	lastApplied   int                        // record the lastApplied to prevent stateMachine from rollback
+	waitApplyCh   map[int]chan *CommandReply // index(raft) -> chan
 
-	configs []Config // indexed by config num
+	lastOperations map[int64]LastOpStruct
 }
 
-
-type Op struct {
-	// Your data here.
+func (sc *ShardCtrler) RemoveWaitChan(ind int) {
+	sc.mu.Lock()
+	delete(sc.waitApplyCh, ind)
+	sc.mu.Unlock()
 }
 
-
-func (sc *ShardCtrler) Join(args *JoinArgs, reply *JoinReply) {
-	// Your code here.
+func (sc *ShardCtrler) isRequestDuplicate(clientId int64, commandId int64) bool {
+	lastOp, ok := sc.lastOperations[clientId]
+	if !ok {
+		return false
+	}
+	return lastOp.CommandId == commandId
 }
 
-func (sc *ShardCtrler) Leave(args *LeaveArgs, reply *LeaveReply) {
-	// Your code here.
-}
+func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
+	sc.mu.RLock()
+	isCheckDuplicate := (args.Op != QueryOp) ||
+		(args.Op == QueryOp && args.Num != -1)
+	if isCheckDuplicate && sc.isRequestDuplicate(args.ClientId, args.CommandId) {
+		lastReply := sc.lastOperations[args.ClientId].LastReply
+		reply.Config, reply.Err = lastReply.Config, lastReply.Err
+		sc.mu.RUnlock()
+		return
+	}
+	sc.mu.RUnlock()
 
-func (sc *ShardCtrler) Move(args *MoveArgs, reply *MoveReply) {
-	// Your code here.
-}
+	ind, _, isLeader := sc.rf.Start(*args)
+	if !isLeader {
+		reply.Err = ErrWrongLeader
+		return
+	}
 
-func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
-	// Your code here.
-}
+	ch := make(chan *CommandReply, 1)
+	sc.mu.Lock()
+	sc.waitApplyCh[ind] = ch
+	sc.mu.Unlock()
 
+	select {
+	case result := <-ch:
+		reply.Config, reply.Err = result.Config, result.Err
+	case <-time.After(TimeoutInterval):
+		reply.Err = ErrTimeout
+	}
+	go sc.RemoveWaitChan(ind)
+}
 
 //
 // the tester calls Kill() when a ShardCtrler instance won't
@@ -49,7 +81,6 @@ func (sc *ShardCtrler) Query(args *QueryArgs, reply *QueryReply) {
 //
 func (sc *ShardCtrler) Kill() {
 	sc.rf.Kill()
-	// Your code here, if desired.
 }
 
 // needed by shardkv tester
@@ -64,17 +95,17 @@ func (sc *ShardCtrler) Raft() *raft.Raft {
 // me is the index of the current server in servers[].
 //
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister) *ShardCtrler {
+	labgob.Register(CommandArgs{})
 	sc := new(ShardCtrler)
 	sc.me = me
 
-	sc.configs = make([]Config, 1)
-	sc.configs[0].Groups = map[int][]string{}
-
-	labgob.Register(Op{})
 	sc.applyCh = make(chan raft.ApplyMsg)
 	sc.rf = raft.Make(servers, me, persister, sc.applyCh)
 
-	// Your code here.
+	sc.configMachine = NewMemoryConfigSM()
+	sc.waitApplyCh = make(map[int]chan *CommandReply)
+	sc.lastOperations = make(map[int64]LastOpStruct)
 
+	go sc.applier()
 	return sc
 }

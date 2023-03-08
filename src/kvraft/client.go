@@ -71,7 +71,7 @@ func (ck *Clerk) Command(req *CommandArgs) string {
 			continue
 		}
 		if reply.Err == ErrWrongLeader {
-			time.Sleep(RetryInterval)
+			// time.Sleep(RetryInterval)
 			server = ck.nextLeader(server)
 			continue
 		}
