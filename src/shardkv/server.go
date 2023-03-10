@@ -1,39 +1,85 @@
 package shardkv
 
+import (
+	"sync"
+	"sync/atomic"
+	"time"
 
-import "6.824/labrpc"
-import "6.824/raft"
-import "sync"
-import "6.824/labgob"
+	"6.824/labgob"
+	"6.824/labrpc"
+	"6.824/raft"
+	"6.824/shardctrler"
+)
 
-
-
-type Op struct {
-	// Your definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
-}
+const (
+	Debug                = false
+	TimeoutInterval      = 500 * time.Millisecond
+	ConfigurationTimeout = 100 * time.Millisecond
+	MigrationTimeout     = 100 * time.Millisecond
+	GCTimeout            = 150 * time.Millisecond
+	EmptyEntryTimeout    = 100 * time.Millisecond
+)
 
 type ShardKV struct {
-	mu           sync.Mutex
-	me           int
-	rf           *raft.Raft
-	applyCh      chan raft.ApplyMsg
-	make_end     func(string) *labrpc.ClientEnd
-	gid          int
-	ctrlers      []*labrpc.ClientEnd
+	mu      sync.RWMutex
+	me      int
+	rf      *raft.Raft
+	applyCh chan raft.ApplyMsg
+	dead    int32
+
+	make_end func(string) *labrpc.ClientEnd
+	gid      int
+	sc       *shardctrler.Clerk
+
 	maxraftstate int // snapshot if log grows this big
+	lastApplied  int // record the lastApplied to prevent stateMachine from rollback
 
-	// Your definitions here.
+	lastConfig    shardctrler.Config
+	currentConfig shardctrler.Config
+
+	stateMachine   map[int]*Shard             // KV stateMachines
+	lastOperations map[int64]LastOpStruct     // determine whether log is duplicated by recording the last commandId and response corresponding to the clientId
+	waitApplyCh    map[int]chan *CommandReply // notify client goroutine by applier goroutine to response
 }
 
-
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) {
-	// Your code here.
+func (kv *ShardKV) RemoveWaitChan(ind int) {
+	kv.mu.Lock()
+	delete(kv.waitApplyCh, ind)
+	kv.mu.Unlock()
 }
 
-func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
-	// Your code here.
+// check whether this raft group can serve this shard at present
+func (kv *ShardKV) canServe(shardID int) bool {
+	return kv.currentConfig.Shards[shardID] == kv.gid &&
+		(kv.stateMachine[shardID].Status == Serving || kv.stateMachine[shardID].Status == GCing)
+}
+
+func (kv *ShardKV) isRequestDuplicate(clientId int64, commandId int64) bool {
+	lastOp, ok := kv.lastOperations[clientId]
+	if !ok {
+		return false
+	}
+	return lastOp.CommandId == commandId
+}
+
+func (kv *ShardKV) Command(args *CommandArgs, reply *CommandReply) {
+	kv.mu.RLock()
+	// return result directly without raft layer's participation if request is duplicated
+	if args.Op != GetOp && kv.isRequestDuplicate(args.ClientId, args.CommandId) {
+		lastReply := kv.lastOperations[args.ClientId].LastReply
+		reply.Value, reply.Err = lastReply.Value, lastReply.Err
+		kv.mu.RUnlock()
+		return
+	}
+	// return ErrWrongGroup directly to let client fetch latest configuration and
+	// perform a retry if this key can't be served by this shard at present
+	if !kv.canServe(key2shard(args.Key)) {
+		reply.Err = ErrWrongGroup
+		kv.mu.RUnlock()
+		return
+	}
+	kv.mu.RUnlock()
+	kv.Execute(NewOperationCommand(args), reply)
 }
 
 //
@@ -43,10 +89,14 @@ func (kv *ShardKV) PutAppend(args *PutAppendArgs, reply *PutAppendReply) {
 // turn off debug output from this instance.
 //
 func (kv *ShardKV) Kill() {
+	atomic.StoreInt32(&kv.dead, 1)
 	kv.rf.Kill()
-	// Your code here, if desired.
 }
 
+func (kv *ShardKV) killed() bool {
+	z := atomic.LoadInt32(&kv.dead)
+	return z == 1
+}
 
 //
 // servers[] contains the ports of the servers in this group.
@@ -79,23 +129,54 @@ func (kv *ShardKV) Kill() {
 func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister, maxraftstate int, gid int, ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.ClientEnd) *ShardKV {
 	// call labgob.Register on structures you want
 	// Go's RPC library to marshall/unmarshall.
-	labgob.Register(Op{})
+	labgob.Register(Command{})
+	labgob.Register(CommandArgs{})
+	labgob.Register(shardctrler.Config{})
+	labgob.Register(ShardOpArgs{})
+	labgob.Register(ShardOpReply{})
 
 	kv := new(ShardKV)
+	kv.dead = 0
 	kv.me = me
 	kv.maxraftstate = maxraftstate
 	kv.make_end = make_end
 	kv.gid = gid
-	kv.ctrlers = ctrlers
-
-	// Your initialization code here.
-
-	// Use something like this to talk to the shardctrler:
-	// kv.mck = shardctrler.MakeClerk(kv.ctrlers)
 
 	kv.applyCh = make(chan raft.ApplyMsg)
 	kv.rf = raft.Make(servers, me, persister, kv.applyCh)
+	kv.sc = shardctrler.MakeClerk(ctrlers)
 
+	kv.lastConfig = shardctrler.DefaultConfig()
+	kv.currentConfig = shardctrler.DefaultConfig()
+	kv.lastOperations = make(map[int64]LastOpStruct)
+	kv.waitApplyCh = make(map[int]chan *CommandReply)
+	kv.stateMachine = make(map[int]*Shard)
+	kv.lastApplied = 0
+
+	snapshot := persister.ReadSnapshot()
+	if len(snapshot) > 0 {
+		kv.ReadSnapshot(snapshot)
+	}
+
+	// start applier goroutine to apply committed logs to stateMachine
+	go kv.applier()
+	// start configuration monitor goroutine to fetch latest configuration
+	go kv.Daemon(kv.configureActor, ConfigurationTimeout)
+	// start migration monitor goroutine to pull related shards
+	go kv.Daemon(kv.migrationActor, MigrationTimeout)
+	// start gc monitor goroutine to delete useless shards in remote groups
+	go kv.Daemon(kv.gcActor, GCTimeout)
+	// start entry-in-currentTerm monitor goroutine to advance commitIndex by appending empty entries in current term periodically to avoid live locks
+	go kv.Daemon(kv.CheckEntryInCurrentTermActor, EmptyEntryTimeout)
 
 	return kv
+}
+
+func (kv *ShardKV) Daemon(actor func(), timeout time.Duration) {
+	for !kv.killed() {
+		if _, isLeader := kv.rf.GetState(); isLeader {
+			actor()
+		}
+		time.Sleep(timeout)
+	}
 }

@@ -164,3 +164,9 @@ func (rf *Raft) InstallSnapShot(args *InstallSnapshotArgs, reply *InstallSnapsho
 		rf.me, args.LeaderId, args.LastIncludedIndex)
 
 }
+
+func (rf *Raft) HasLogInCurrentTerm() bool {
+	rf.mu.RLock()
+	defer rf.mu.RUnlock()
+	return rf.getLastTerm() == rf.currentTerm
+}

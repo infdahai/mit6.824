@@ -14,31 +14,82 @@ const (
 	ErrNoKey       = "ErrNoKey"
 	ErrWrongGroup  = "ErrWrongGroup"
 	ErrWrongLeader = "ErrWrongLeader"
+	ErrTimeout     = "ErrTimeout"
+	ErrOutdated    = "ErrOutdated"
+	ErrNotReady    = "ErrNotReady"
 )
 
 type Err string
 
-// Put or Append
-type PutAppendArgs struct {
-	// You'll have to add definitions here.
+type Args struct {
+	ClientId  int64
+	CommandId int64
+}
+
+type OpInt int
+
+const (
+	PutOp OpInt = iota
+	AppendOp
+	GetOp
+)
+
+// type CommandArgs struct {
+// 	Servers map[int][]string // Join, new GID -> servers mappings
+// 	GIDs    []int            // Leave
+// 	Shard   int              // Move
+// 	GID     int              // Move
+// 	Num     int              // Query, desired config number
+// 	Op      OpInt
+// 	Args
+// }
+
+type CommandArgs struct {
 	Key   string
 	Value string
-	Op    string // "Put" or "Append"
-	// You'll have to add definitions here.
-	// Field names must start with capital letters,
-	// otherwise RPC will break.
+	Op    OpInt // "Put" or "Append" or "Get"
+	Args
 }
 
-type PutAppendReply struct {
-	Err Err
-}
-
-type GetArgs struct {
-	Key string
-	// You'll have to add definitions here.
-}
-
-type GetReply struct {
+type CommandReply struct {
 	Err   Err
 	Value string
+}
+
+type ShardOpArgs struct {
+	ConfigNum int
+	ShardIDs  []int
+}
+
+type ShardOpReply struct {
+	Err            Err
+	Shards         map[int]map[string]string
+	LastOperations map[int64]LastOpStruct
+	ConfigNum      int
+}
+
+type LastOpStruct struct {
+	LastReply *CommandReply
+	CommandId int64
+}
+
+func (op *LastOpStruct) deepCopy() LastOpStruct {
+	lastop := LastOpStruct{CommandId: op.CommandId}
+	lastop.LastReply = &CommandReply{Err: op.LastReply.Err, Value: op.LastReply.Value}
+	return lastop
+}
+
+type CommandType uint8
+
+const (
+	Operation CommandType = iota
+	Configuration
+	InsertShards
+	DeleteShards
+	EmptyEntry
+)
+
+type Command struct {
+	Op   CommandType
+	Data interface{}
 }

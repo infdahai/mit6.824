@@ -36,6 +36,12 @@ type Config struct {
 // one group[gid] can maintain multiple shards(len(shards)>=1)
 // valid gid is non-zero
 
+func DefaultConfig() Config {
+	config := Config{}
+	config.Groups = make(map[int][]string)
+	return config
+}
+
 const (
 	OK             = "OK"
 	ErrWrongLeader = "ErrWrongLeader"
