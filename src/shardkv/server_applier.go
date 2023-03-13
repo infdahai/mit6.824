@@ -13,9 +13,12 @@ func (kv *ShardKV) applier() {
 		if kv.killed() {
 			return
 		}
+		DPrintf(kv.rf.Me(), "[Applier--start]server[%d]", kv.rf.Me()%1000)
 		if msg.CommandValid {
 			kv.mu.Lock()
 			if msg.CommandIndex <= kv.lastApplied {
+				DPrintf(kv.rf.Me(), "[Applier--Outdate]server[%d] msgCmdInd[%d] kvLaApply[%d]",
+					kv.rf.Me()%1000, msg.CommandIndex, kv.lastApplied)
 				kv.mu.Unlock()
 				continue
 			}
@@ -53,6 +56,9 @@ func (kv *ShardKV) applier() {
 			if needSnapshot {
 				kv.takeSnapshot(msg.CommandIndex)
 			}
+
+			DPrintf(kv.rf.Me(), "[Applier--CmdFinish]server[%d] msgCmdInd[%d] kvLaApply[%d] reply[%v]",
+				kv.rf.Me()%1000, msg.CommandIndex, kv.lastApplied, reply)
 			kv.mu.Unlock()
 		} else if msg.SnapshotValid {
 			kv.mu.Lock()
@@ -72,12 +78,14 @@ func (kv *ShardKV) applyOperation(msg *raft.ApplyMsg, command *CommandArgs) *Com
 	shardId := key2shard(command.Key)
 	if kv.canServe(shardId) {
 		if command.Op != GetOp && kv.isRequestDuplicate(command.ClientId, command.CommandId) {
-			reply = kv.lastOperations[command.ClientId].LastReply
+			DPrintf(kv.rf.Me(), "[Applier--duplicate]server[%d] clientId[%d] cmdId[%d] LaReply[Err[%s]]",
+				kv.rf.Me(), command.ClientId, command.CommandId, reply.Err)
+			*reply = kv.lastOperations[command.ClientId].LastReply
 			return reply
 		} else {
 			reply = kv.applyLogToStateMachine(command, shardId)
 			if command.Op != GetOp {
-				kv.lastOperations[command.ClientId] = LastOpStruct{LastReply: reply, CommandId: command.CommandId}
+				kv.lastOperations[command.ClientId] = LastOpStruct{LastReply: *reply, CommandId: command.CommandId}
 			}
 			return reply
 		}

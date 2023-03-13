@@ -73,6 +73,10 @@ func MakeClerk(ctrlers []*labrpc.ClientEnd, make_end func(string) *labrpc.Client
 		commandId: 0,
 	}
 	ck.config = ck.sm.Query(-1)
+
+	DPrintf(int(ck.cid), "[InitClerk---clerk]clientId[%d] commandId[%d] leaderId[%d] config[%v]",
+		ck.cid%1000, ck.commandId, ck.leaderId, ck.config)
+
 	return ck
 }
 
@@ -96,15 +100,23 @@ func (ck *Clerk) Command(req *CommandArgs) string {
 			for {
 				var reply CommandReply
 				ok := ck.make_end(servers[newLeaderId]).Call("ShardKV.Command", req, &reply)
+				DPrintf(int(ck.cid), "[ClientReq Command--req]clientId[%d] commandId[%d] ok[%t] err[%s] req[%v]",
+					req.ClientId%1000, req.CommandId, ok, reply.Err, req)
 				if ok && (reply.Err == OK || reply.Err == ErrNoKey) {
+					DPrintf(int(ck.cid), "[ClientRecvOK Command--recv]clientId[%d] commandId[%d]",
+						req.ClientId%1000, req.CommandId)
 					ck.leaderId[gid] = newLeaderId
 					ck.cid++
 					return reply.Value
 				} else if ok && reply.Err == ErrWrongGroup {
+					DPrintf(int(ck.cid), "[ClientRecv Command--wrongGroup]clientId[%d] commandId[%d]",
+						req.ClientId%1000, req.CommandId)
 					break
 				} else {
 					// ErrWrongLeader or ErrTimeout
 					newLeaderId = (newLeaderId + 1) % len(servers)
+					DPrintf(int(ck.cid), "[ClientRecv Command--wrongGroup]clientId[%d] commandId[%d] reply[%v]",
+						req.ClientId%1000, req.CommandId, reply)
 					if newLeaderId == oldLeaderId {
 						break
 					}

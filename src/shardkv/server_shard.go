@@ -13,9 +13,32 @@ const (
 	GCing
 )
 
+func ConvertShardStatus(status ShardStatus) string {
+	switch status {
+	case Serving:
+		return "Serving"
+	case Pulling:
+		return "Pulling"
+	case BePulling:
+		return "BePulling"
+	case GCing:
+		return "GCing"
+	default:
+		panic("unknown ShardStatus")
+	}
+}
+
 type Shard struct {
 	KV     map[string]string
 	Status ShardStatus
+}
+
+func (kv *ShardKV) getShardStatus() map[int]string {
+	ret := make(map[int]string)
+	for shardid, shard := range kv.stateMachine {
+		ret[shardid] = ConvertShardStatus(shard.Status)
+	}
+	return ret
 }
 
 func NewShard() *Shard {
@@ -60,10 +83,14 @@ func (kv *ShardKV) updateShardStatus(nextConfig *shardctrler.Config) {
 			kv.stateMachine[shardId] = &Shard{KV: make(map[string]string), Status: Pulling}
 		}
 	}
+
+	DPrintf(kv.rf.Me(), "[Server updateShardStatus--]server[%d]  shardStatus[%v]",
+		kv.rf.Me()%1000, kv.getShardStatus())
 }
 
 func (kv *ShardKV) getShardIDsByStatus(status ShardStatus) map[int][]int {
 	gid2shardIDs := make(map[int][]int)
+
 	for shardID, shard := range kv.stateMachine {
 		if shard.Status == status {
 			oldgid := kv.lastConfig.Shards[shardID]
@@ -77,13 +104,20 @@ func (kv *ShardKV) GetShardsData(args *ShardOpArgs, reply *ShardOpReply) {
 	// only pull shards from leader
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
+		DPrintf(kv.rf.Me(), "[Server GetShardsData--Err(WrongLeader)]server[%d] gid[%d] args[%v] reply[%v]",
+			kv.rf.Me()%1000, kv.gid, args, reply)
 		return
 	}
+
 	kv.mu.RLock()
 	defer kv.mu.RUnlock()
+	DPrintf(kv.rf.Me(), "[Server GetShardsData--]server[%d] gid[%d] args[%v] reply[%v]",
+		kv.rf.Me()%1000, kv.gid, args, reply)
 
 	if kv.currentConfig.Num < args.ConfigNum {
 		reply.Err = ErrNotReady
+		DPrintf(kv.rf.Me(), "[Server GetShardsData--NotReady]server[%d] gid[%d] args[%v] argsnum[%d] curConfig[%v] reply[%v]",
+			kv.rf.Me()%1000, kv.gid, args, args.ConfigNum, kv.currentConfig, reply)
 		return
 	}
 
@@ -96,7 +130,12 @@ func (kv *ShardKV) GetShardsData(args *ShardOpArgs, reply *ShardOpReply) {
 	for clienID, op := range kv.lastOperations {
 		reply.LastOperations[clienID] = op.deepCopy()
 	}
+
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
+
+	DPrintf(kv.rf.Me(), "[Server GetShardsData--OK]server[%d] gid[%d] args[%v] reply[%v]",
+		kv.rf.Me()%1000, kv.gid, args, reply)
+
 }
 
 func (kv *ShardKV) DeleteShardsData(args *ShardOpArgs, reply *ShardOpReply) {
