@@ -42,14 +42,14 @@ func (kv *ShardKV) configureActor() {
 	kv.mu.RUnlock()
 	if canPerformNextConfig {
 		nextConfig := kv.sc.Query(currentConfigNum + 1)
-		DPrintf(kv.rf.Me(), "[configureActor--Query(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v]",
+		DPrintf(kv.rf.Me(), "[configureActor--Query(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v] next_config[%v]",
 			currentConfigNum, nextConfig.Num, kv.rf.Me()%1000,
-			kv.gid, kv.getShardStatus(), kv.currentConfig)
+			kv.gid, kv.getShardStatus(), kv.currentConfig, nextConfig)
 		if nextConfig.Num == currentConfigNum+1 {
 
-			DPrintf(kv.rf.Me(), "[configureActor--OK(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v]",
+			DPrintf(kv.rf.Me(), "[configureActor--OK(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v] next_config[%v]",
 				currentConfigNum, nextConfig.Num, kv.rf.Me()%1000,
-				kv.gid, kv.getShardStatus(), kv.currentConfig)
+				kv.gid, kv.getShardStatus(), kv.currentConfig, nextConfig)
 			kv.Execute(NewConfigurationCommand(&nextConfig), &CommandReply{})
 		}
 	}
@@ -120,9 +120,8 @@ func (kv *ShardKV) Execute(args Command, reply *CommandReply) {
 		return
 	}
 
-	ch := make(chan *CommandReply, 1)
 	kv.mu.Lock()
-	kv.waitApplyCh[ind] = ch
+	ch := kv.UseOrCreateWaitChan(ind)
 	kv.mu.Unlock()
 
 	select {

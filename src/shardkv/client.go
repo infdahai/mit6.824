@@ -15,8 +15,6 @@ import (
 
 	"6.824/labrpc"
 	"6.824/shardctrler"
-
-	mathrand "math/rand"
 )
 
 //
@@ -38,10 +36,6 @@ func nrand() int64 {
 	bigx, _ := rand.Int(rand.Reader, max)
 	x := bigx.Int64()
 	return x
-}
-
-func NServerRand(len int) int {
-	return mathrand.Intn(len)
 }
 
 type Clerk struct {

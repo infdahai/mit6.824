@@ -75,12 +75,19 @@ func (shard *Shard) Change(kvmap map[string]string) {
 }
 
 func (kv *ShardKV) updateShardStatus(nextConfig *shardctrler.Config) {
-	for shardId, newgid := range nextConfig.Shards {
-		oldgid := kv.currentConfig.Shards[shardId]
-		if oldgid == kv.gid && kv.gid != newgid {
-			kv.stateMachine[shardId].Status = BePulling
-		} else if oldgid != kv.gid && newgid == kv.gid {
-			kv.stateMachine[shardId] = &Shard{KV: make(map[string]string), Status: Pulling}
+	// TODO(infdahai): important!!! remember gid !=0 is valid.
+	for i := 0; i < shardctrler.NShards; i++ {
+		oldgid := kv.currentConfig.Shards[i]
+		newgid := nextConfig.Shards[i]
+		if oldgid != kv.gid && newgid == kv.gid {
+			if oldgid != 0 {
+				kv.stateMachine[i].Status = Pulling
+			}
+		}
+		if oldgid == kv.gid && newgid != kv.gid {
+			if newgid != 0 {
+				kv.stateMachine[i].Status = BePulling
+			}
 		}
 	}
 
@@ -90,11 +97,17 @@ func (kv *ShardKV) updateShardStatus(nextConfig *shardctrler.Config) {
 
 func (kv *ShardKV) getShardIDsByStatus(status ShardStatus) map[int][]int {
 	gid2shardIDs := make(map[int][]int)
-
 	for shardID, shard := range kv.stateMachine {
 		if shard.Status == status {
 			oldgid := kv.lastConfig.Shards[shardID]
-			gid2shardIDs[oldgid] = append(gid2shardIDs[oldgid], shardID)
+			// TODO(infdahai): important!!! remember gid !=0 is valid.
+			if oldgid != 0 {
+				if _, ok := gid2shardIDs[oldgid]; !ok {
+					//BUG: make int slice entry.
+					gid2shardIDs[oldgid] = make([]int, 0)
+				}
+				gid2shardIDs[oldgid] = append(gid2shardIDs[oldgid], shardID)
+			}
 		}
 	}
 	return gid2shardIDs

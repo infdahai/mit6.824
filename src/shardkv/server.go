@@ -12,12 +12,12 @@ import (
 )
 
 const (
-	Debug                = true
-	TimeoutInterval      = 200 * time.Millisecond
-	ConfigurationTimeout = 100 * time.Millisecond
-	MigrationTimeout     = 100 * time.Millisecond
-	GCTimeout            = 150 * time.Millisecond
-	EmptyEntryTimeout    = 100 * time.Millisecond
+	Debug                = false
+	TimeoutInterval      = 500 * time.Millisecond
+	ConfigurationTimeout = 90 * time.Millisecond
+	MigrationTimeout     = 50 * time.Millisecond
+	GCTimeout            = 50 * time.Millisecond
+	EmptyEntryTimeout    = 200 * time.Millisecond
 )
 
 type ShardKV struct {
@@ -42,6 +42,13 @@ type ShardKV struct {
 	waitApplyCh    map[int]chan *CommandReply // notify client goroutine by applier goroutine to response
 }
 
+func (kv *ShardKV) UseOrCreateWaitChan(ind int) chan *CommandReply {
+	if _, ok := kv.waitApplyCh[ind]; !ok {
+		kv.waitApplyCh[ind] = make(chan *CommandReply, 1)
+	}
+	return kv.waitApplyCh[ind]
+}
+
 func (kv *ShardKV) RemoveWaitChan(ind int) {
 	kv.mu.Lock()
 	delete(kv.waitApplyCh, ind)
@@ -59,7 +66,7 @@ func (kv *ShardKV) isRequestDuplicate(clientId int64, commandId int64) bool {
 	if !ok {
 		return false
 	}
-	return lastOp.CommandId == commandId
+	return lastOp.CommandId >= commandId
 }
 
 func (kv *ShardKV) Command(args *CommandArgs, reply *CommandReply) {
@@ -164,9 +171,7 @@ func StartServer(servers []*labrpc.ClientEnd, me int, persister *raft.Persister,
 	kv.lastApplied = 0
 
 	snapshot := persister.ReadSnapshot()
-	if len(snapshot) > 0 {
-		kv.ReadSnapshot(snapshot)
-	}
+	kv.ReadSnapshot(snapshot)
 
 	// start applier goroutine to apply committed logs to stateMachine
 	go kv.applier()

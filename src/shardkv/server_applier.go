@@ -22,8 +22,8 @@ func (kv *ShardKV) applier() {
 				kv.mu.Unlock()
 				continue
 			}
-			kv.lastApplied = msg.CommandIndex
 
+			kv.lastApplied = msg.CommandIndex
 			var reply *CommandReply
 			command, ok := msg.Command.(Command)
 			if !ok {
@@ -78,14 +78,14 @@ func (kv *ShardKV) applyOperation(msg *raft.ApplyMsg, command *CommandArgs) *Com
 	shardId := key2shard(command.Key)
 	if kv.canServe(shardId) {
 		if command.Op != GetOp && kv.isRequestDuplicate(command.ClientId, command.CommandId) {
+			reply = kv.lastOperations[command.ClientId].LastReply
 			DPrintf(kv.rf.Me(), "[Applier--duplicate]server[%d] clientId[%d] cmdId[%d] LaReply[Err[%s]]",
 				kv.rf.Me(), command.ClientId, command.CommandId, reply.Err)
-			*reply = kv.lastOperations[command.ClientId].LastReply
 			return reply
 		} else {
 			reply = kv.applyLogToStateMachine(command, shardId)
 			if command.Op != GetOp {
-				kv.lastOperations[command.ClientId] = LastOpStruct{LastReply: *reply, CommandId: command.CommandId}
+				kv.lastOperations[command.ClientId] = LastOpStruct{LastReply: reply, CommandId: command.CommandId}
 			}
 			return reply
 		}
@@ -151,7 +151,7 @@ func (kv *ShardKV) applyEmptyEntry() *CommandReply {
 }
 
 func (kv *ShardKV) applyLogToStateMachine(command *CommandArgs, shardId int) *CommandReply {
-	var reply *CommandReply
+	var reply CommandReply
 	switch command.Op {
 	case GetOp:
 		reply.Value, reply.Err = kv.stateMachine[shardId].Get(command.Key)
@@ -160,5 +160,5 @@ func (kv *ShardKV) applyLogToStateMachine(command *CommandArgs, shardId int) *Co
 	case AppendOp:
 		reply.Err = kv.stateMachine[shardId].Append(command.Key, command.Value)
 	}
-	return reply
+	return &reply
 }

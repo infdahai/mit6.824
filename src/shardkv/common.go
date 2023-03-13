@@ -58,19 +58,19 @@ type ShardOpArgs struct {
 
 type ShardOpReply struct {
 	Err            Err
+	ConfigNum      int
 	Shards         map[int]map[string]string
 	LastOperations map[int64]LastOpStruct
-	ConfigNum      int
 }
 
 type LastOpStruct struct {
-	LastReply CommandReply
+	LastReply *CommandReply
 	CommandId int64
 }
 
 func (op *LastOpStruct) deepCopy() LastOpStruct {
 	lastop := LastOpStruct{CommandId: op.CommandId}
-	lastop.LastReply = CommandReply{Err: op.LastReply.Err, Value: op.LastReply.Value}
+	lastop.LastReply = &CommandReply{Err: op.LastReply.Err, Value: op.LastReply.Value}
 	return lastop
 }
 
