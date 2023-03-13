@@ -71,16 +71,11 @@ func (kv *ShardKV) isRequestDuplicate(clientId int64, commandId int64) bool {
 
 func (kv *ShardKV) Command(args *CommandArgs, reply *CommandReply) {
 	kv.mu.RLock()
-	DPrintf(kv.rf.Me(), "[ServerRecv Command--recv]server[%d] clientId[%d] commandId[%d] Operation[%s]",
-		kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, Opmap1[args.Op])
-
 	// return result directly without raft layer's participation if request is duplicated
 	if args.Op != GetOp && kv.isRequestDuplicate(args.ClientId, args.CommandId) {
 		lastReply := kv.lastOperations[args.ClientId].LastReply
 		reply.Value, reply.Err = lastReply.Value, lastReply.Err
 
-		DPrintf(kv.rf.Me(), "[ServerRecv Command--dup]server[%d] clientId[%d] commandId[%d] err[%s]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 		kv.mu.RUnlock()
 		return
 	}
@@ -88,14 +83,10 @@ func (kv *ShardKV) Command(args *CommandArgs, reply *CommandReply) {
 	// perform a retry if this key can't be served by this shard at present
 	if !kv.canServe(key2shard(args.Key)) {
 		reply.Err = ErrWrongGroup
-		DPrintf(kv.rf.Me(), "[ServerRecv Command--WrongGroup]server[%d] clientId[%d] commandId[%d] err[%s]",
-			kv.rf.Me()%1000, args.ClientId%1000, args.CommandId, reply.Err)
 		kv.mu.RUnlock()
 		return
 	}
 	kv.mu.RUnlock()
-	DPrintf(kv.rf.Me(), "[Server Exec--Command]server[%d] Command args[%v]",
-		kv.rf.Me()%1000, *args)
 	kv.Execute(NewOperationCommand(args), reply)
 }
 

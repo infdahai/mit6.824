@@ -33,8 +33,6 @@ func (kv *ShardKV) configureActor() {
 	for _, shard := range kv.stateMachine {
 		if shard.Status != Serving {
 			canPerformNextConfig = false
-			DPrintf(kv.rf.Me(), "[configureActor--not finish(can't next config)]server[%d] gid[%d] shard_status[%v] cur_config[%v]",
-				kv.rf.Me()%1000, kv.gid, kv.getShardStatus(), kv.currentConfig)
 			break
 		}
 	}
@@ -42,14 +40,7 @@ func (kv *ShardKV) configureActor() {
 	kv.mu.RUnlock()
 	if canPerformNextConfig {
 		nextConfig := kv.sc.Query(currentConfigNum + 1)
-		DPrintf(kv.rf.Me(), "[configureActor--Query(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v] next_config[%v]",
-			currentConfigNum, nextConfig.Num, kv.rf.Me()%1000,
-			kv.gid, kv.getShardStatus(), kv.currentConfig, nextConfig)
 		if nextConfig.Num == currentConfigNum+1 {
-
-			DPrintf(kv.rf.Me(), "[configureActor--OK(curConfigNum[%d] nextConfigNum[%d])]server[%d] gid[%d] shard_status[%v] cur_config[%v] next_config[%v]",
-				currentConfigNum, nextConfig.Num, kv.rf.Me()%1000,
-				kv.gid, kv.getShardStatus(), kv.currentConfig, nextConfig)
 			kv.Execute(NewConfigurationCommand(&nextConfig), &CommandReply{})
 		}
 	}
@@ -60,8 +51,6 @@ func (kv *ShardKV) migrationActor() {
 	gid2shardIDs := kv.getShardIDsByStatus(Pulling)
 	var wg sync.WaitGroup
 	for gid, shardIds := range gid2shardIDs {
-		DPrintf(kv.rf.Me(), "[migrationActor--routine]server[%d] gid[%d] shardIDs[%v] cur_config[%v] gid2shardIDs[%v]",
-			kv.rf.Me()%1000, kv.gid, shardIds, kv.currentConfig, gid2shardIDs)
 
 		wg.Add(1)
 		go func(servers []string, configNum int, shardIDs []int) {
@@ -71,8 +60,6 @@ func (kv *ShardKV) migrationActor() {
 				var pullTaskReply ShardOpReply
 				srv := kv.make_end(server)
 				if srv.Call("ShardKV.GetShardsData", &pullTaskArgs, &pullTaskReply) && pullTaskReply.Err == OK {
-					DPrintf(kv.rf.Me(), "[migrationActor--OK]server[%d] gid[%d] pullTaskReply[%v] cur_config[%v]",
-						kv.rf.Me()%1000, kv.gid, pullTaskReply, kv.currentConfig)
 
 					kv.Execute(NewInsertShardsCommand(&pullTaskReply), &CommandReply{})
 				}
@@ -115,8 +102,6 @@ func (kv *ShardKV) Execute(args Command, reply *CommandReply) {
 	ind, _, isLeader := kv.rf.Start(args)
 	if !isLeader {
 		reply.Err = ErrWrongLeader
-		DPrintf(kv.rf.Me(), "[Server Exec--WrongLeader]server[%d] cmdType[%s]",
-			kv.rf.Me()%1000, Opmap2[args.Op])
 		return
 	}
 
@@ -130,8 +115,6 @@ func (kv *ShardKV) Execute(args Command, reply *CommandReply) {
 	case <-time.After(TimeoutInterval):
 		reply.Err = ErrTimeout
 	}
-	DPrintf(kv.rf.Me(), "[Server Exec--finish]server[%d] reply[%v]",
-		kv.rf.Me()%1000, reply)
 
 	go kv.RemoveWaitChan(ind)
 }

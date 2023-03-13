@@ -91,8 +91,6 @@ func (kv *ShardKV) updateShardStatus(nextConfig *shardctrler.Config) {
 		}
 	}
 
-	DPrintf(kv.rf.Me(), "[Server updateShardStatus--]server[%d]  shardStatus[%v]",
-		kv.rf.Me()%1000, kv.getShardStatus())
 }
 
 func (kv *ShardKV) getShardIDsByStatus(status ShardStatus) map[int][]int {
@@ -103,7 +101,7 @@ func (kv *ShardKV) getShardIDsByStatus(status ShardStatus) map[int][]int {
 			// TODO(infdahai): important!!! remember gid !=0 is valid.
 			if oldgid != 0 {
 				if _, ok := gid2shardIDs[oldgid]; !ok {
-					//BUG: make int slice entry.
+					//BUG: make int slice entry. remember that.
 					gid2shardIDs[oldgid] = make([]int, 0)
 				}
 				gid2shardIDs[oldgid] = append(gid2shardIDs[oldgid], shardID)
@@ -117,20 +115,14 @@ func (kv *ShardKV) GetShardsData(args *ShardOpArgs, reply *ShardOpReply) {
 	// only pull shards from leader
 	if _, isLeader := kv.rf.GetState(); !isLeader {
 		reply.Err = ErrWrongLeader
-		DPrintf(kv.rf.Me(), "[Server GetShardsData--Err(WrongLeader)]server[%d] gid[%d] args[%v] reply[%v]",
-			kv.rf.Me()%1000, kv.gid, args, reply)
 		return
 	}
 
 	kv.mu.RLock()
 	defer kv.mu.RUnlock()
-	DPrintf(kv.rf.Me(), "[Server GetShardsData--]server[%d] gid[%d] args[%v] reply[%v]",
-		kv.rf.Me()%1000, kv.gid, args, reply)
 
 	if kv.currentConfig.Num < args.ConfigNum {
 		reply.Err = ErrNotReady
-		DPrintf(kv.rf.Me(), "[Server GetShardsData--NotReady]server[%d] gid[%d] args[%v] argsnum[%d] curConfig[%v] reply[%v]",
-			kv.rf.Me()%1000, kv.gid, args, args.ConfigNum, kv.currentConfig, reply)
 		return
 	}
 
@@ -145,10 +137,6 @@ func (kv *ShardKV) GetShardsData(args *ShardOpArgs, reply *ShardOpReply) {
 	}
 
 	reply.ConfigNum, reply.Err = args.ConfigNum, OK
-
-	DPrintf(kv.rf.Me(), "[Server GetShardsData--OK]server[%d] gid[%d] args[%v] reply[%v]",
-		kv.rf.Me()%1000, kv.gid, args, reply)
-
 }
 
 func (kv *ShardKV) DeleteShardsData(args *ShardOpArgs, reply *ShardOpReply) {

@@ -38,7 +38,7 @@ func (sc *ShardCtrler) isRequestDuplicate(clientId int64, commandId int64) bool 
 	if !ok {
 		return false
 	}
-	return lastOp.CommandId == commandId
+	return lastOp.CommandId >= commandId
 }
 
 func (sc *ShardCtrler) Command(args *CommandArgs, reply *CommandReply) {
